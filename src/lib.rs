@@ -45,11 +45,11 @@ impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<
         }
     }
 
+    #[inline(always)]
     pub fn get(&self, key: K) -> Option<&V> {
         let hash = self.hash(&key);
         let mut slot = self.modulo(hash);
         loop {
-            match &self.data[slot] {
             match self.data[slot] {
                 Slot::Empty => return None,
                 Slot::Occupied(ref node) if node.hash == hash => return Some(&node.value),
@@ -58,10 +58,12 @@ impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<
         }
     }
 
+    #[inline(always)]
     fn exceeded_load_factor(&self) -> bool {
         self.capacity * 3 < self.len * 4
     }
 
+    #[inline(always)]
     pub fn set(&mut self, key: K, value: V) {
         if self.exceeded_load_factor() {
             self.resize();
@@ -71,6 +73,7 @@ impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<
         loop {
             match self.data[idx] {
                 Slot::Empty | Slot::Deleted => break,
+                // I'd love to make this have the same match arm as the line above
                 Slot::Occupied(ref slot) if slot.hash == hash => break,
                 _ => idx = self.modulo(idx as u64 + 1),
             }
@@ -93,6 +96,7 @@ impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<
         self.len -= 1;
     }
 
+    #[inline(always)]
     fn resize(&mut self) {
         while 2usize.pow(self.pow.into()) < 3 * self.len {
             self.pow += 1;
@@ -122,12 +126,14 @@ impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<
         }
     }
 
+    #[inline(always)]
     fn hash(&self, key: &K) -> u64 {
         let mut hasher = S::default().build_hasher();
         key.hash(&mut hasher);
         hasher.finish()
     }
 
+    #[inline(always)]
     fn modulo(&self, offset: u64) -> usize {
         (offset & ((self.capacity - 1) as u64)) as usize
     }
