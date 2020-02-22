@@ -5,6 +5,15 @@ authors = ["Alyssa Verkade <alyssaverkade@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+wyhash = "0.3"
 
 [dev-dependencies]
 loom = "0.2"
+proptest = "0.9"
+criterion = "0.3"
+rand = "0.7"
+jemallocator = "0.3"
+
+[[bench]]
+name = "stampede_benches"
+harness = false

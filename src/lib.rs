@@ -4,6 +4,8 @@ use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use wyhash::WyHash;
+
 const AtomicWrite: Ordering = Ordering::Release;
 const AtomicRead: Ordering = Ordering::Acquire;
 
@@ -21,7 +23,7 @@ enum Slot<V: Clone> {
 }
 
 #[derive(Debug)]
-pub struct StampedeMap<K: Hash, V: Clone, S = BuildHasherDefault<DefaultHasher>>
+pub struct StampedeMap<K: Hash, V: Clone, S = BuildHasherDefault<WyHash>>
 where
     S: BuildHasher,
 {
