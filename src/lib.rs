@@ -50,8 +50,9 @@ impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<
         let mut slot = self.modulo(hash);
         loop {
             match &self.data[slot] {
+            match self.data[slot] {
                 Slot::Empty => return None,
-                Slot::Occupied(node) if node.hash == hash => return Some(&node.value),
+                Slot::Occupied(ref node) if node.hash == hash => return Some(&node.value),
                 Slot::Occupied(_) | Slot::Deleted => slot = self.modulo(slot as u64 + 1),
             }
         }
