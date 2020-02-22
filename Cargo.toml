@@ -1,0 +1,10 @@
+[package]
+name = "stampede_map"
+version = "0.1.0"
+authors = ["Alyssa Verkade <alyssaverkade@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+
+[dev-dependencies]
+loom = "0.2"
