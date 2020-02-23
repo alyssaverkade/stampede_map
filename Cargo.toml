@@ -17,3 +17,7 @@ jemallocator = "0.3"
 [[bench]]
 name = "stampede_benches"
 harness = false
+
+[profile.bench]
+debug = 2
+lto = "fat"

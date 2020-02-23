@@ -1,5 +1,5 @@
 use std::arch::x86_64::*;
-use std::ops::Deref;
+use std::ops::{BitOr, Deref};
 
 pub struct BitMask {
     mask: u16,
@@ -17,9 +17,8 @@ impl BitMask {
     /// the values that match `predicate`
     ///
     /// Panics if `vec.len() < 16`
-    pub fn matches(vec: &[u8], predicate: u8) -> Self {
+    pub fn matches(vec: [u8; 16], predicate: u8) -> Self {
         unsafe {
-            let vec = vec.get_unchecked(..16);
             let vec: __m128i = _mm_lddqu_si128(vec.as_ptr() as *const __m128i);
             let pred = _mm_set1_epi8(predicate as i8);
             BitMask::new(_mm_movemask_epi8(_mm_cmpeq_epi8(vec, pred)) as u16)
@@ -74,6 +73,14 @@ impl Deref for BitMask {
     }
 }
 
+impl BitOr for BitMask {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        BitMask::new(self.mask | rhs.mask)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -94,11 +101,12 @@ mod test {
 
     #[test]
     fn test_bitmask_empty_matches() {
-        let mut vec = Vec::with_capacity(16);
-        for i in 0..16 {
-            vec.push(i);
+        let mut vec = [0; 16];
+
+        for i in 0u8..16 {
+            vec[i as usize] = i
         }
-        let mask = BitMask::matches(&vec, (-128i8) as u8);
+        let mask = BitMask::matches(vec, (-128i8) as u8);
         assert_eq!(*mask, 0);
     }
 }

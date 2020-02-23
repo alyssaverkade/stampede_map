@@ -74,7 +74,7 @@ impl<K: Hash + Sized, V: Clone + std::fmt::Debug, S: BuildHasher + Default> Stam
         let cap = cap.next_power_of_two();
         map.capacity = cap;
         map.data.resize(map.capacity, Slot::Empty);
-        map.ctrl.resize(map.capacity, Empty);
+        map.ctrl.resize(map.capacity + 16, Empty);
         map
     }
 
@@ -100,22 +100,26 @@ impl<K: Hash + Sized, V: Clone + std::fmt::Debug, S: BuildHasher + Default> Stam
         let hash = self.hash(&key);
         let ctrl = ctrl_hash(hash);
         let mut slot = self.modulo(hash);
+        let mut buffer = [Empty; 16];
         loop {
-            match self.ctrl[slot] {
-                Empty => return None,
-                Deleted => (),
-                val @ _ if val == ctrl => {
-                    match self.data[slot] {
+            buffer.copy_from_slice(&self.ctrl[slot..slot + 16]);
+            let ctrl_mask = BitMask::matches(buffer, ctrl);
+            let empty_mask = BitMask::matches(buffer, Empty);
+            for item in ctrl_mask | empty_mask {
+                let offset = self.modulo((slot + item as usize) as u64);
+                match self.ctrl[offset] {
+                    Empty => return None,
+                    val @ _ if val == ctrl => match self.data[offset] {
                         // the ctrl byte should be set to Empty
                         Slot::Empty => unreachable!(),
                         Slot::Occupied(ref node) if node.hash == hash => return Some(&node.value),
                         // probe chain must continue
                         _ => (),
-                    }
+                    },
+                    _ => (),
                 }
-                _ => (),
+                slot = self.modulo(slot as u64 + 16);
             }
-            slot = self.modulo(slot as u64 + 1);
         }
     }
 
