@@ -187,7 +187,7 @@ where
     #[inline(always)]
     fn resize(&mut self) {
         let mut old = Vec::with_capacity(self.capacity);
-        self.capacity = self.capacity().next_power_of_two();
+        self.capacity = (self.capacity() + 1).next_power_of_two();
         self.deleted = 0;
         mem::swap(&mut old, &mut self.data);
         self.ctrl.clear();
