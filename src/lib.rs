@@ -27,7 +27,7 @@ enum Slot<V: Clone> {
     Occupied(Node<V>),
 }
 
-#[inline(never)]
+#[inline(always)]
 pub fn ctrl_hash(hash: u64) -> u8 {
     let val = (hash & 0x7F);
     val as u8
@@ -71,7 +71,6 @@ impl<K: Hash + Sized, V: Clone + std::fmt::Debug, S: BuildHasher + Default> Stam
 
     pub fn with_capacity(cap: usize) -> Self {
         let mut map = Self::new();
-        // round to nearest power of two and find the log2 of that number
         let cap = cap.next_power_of_two();
         map.capacity = cap;
         map.data.resize(map.capacity, Slot::Empty);

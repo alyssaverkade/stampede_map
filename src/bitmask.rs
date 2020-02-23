@@ -11,7 +11,7 @@ impl BitMask {
         Self { mask }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     #[cfg(target_feature = "sse3")]
     /// Load a vector of length 16 into a SSE register and constructs a bitmask of all
     /// the values that match `predicate`
