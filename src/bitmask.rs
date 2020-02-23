@@ -21,7 +21,7 @@ impl BitMask {
         unsafe {
             // read unaligned because alignment of vec cannot be guaranteed due to it
             // being stack allocated
-            let vec: __m128i = _mm_lddqu_si128(vec.as_ptr().read_unaligned() as *const __m128i);
+            let vec: __m128i = _mm_lddqu_si128(vec.as_ptr() as *const __m128i);
             let pred = _mm_set1_epi8(predicate as i8);
             BitMask::new(_mm_movemask_epi8(_mm_cmpeq_epi8(vec, pred)) as u16)
         }
