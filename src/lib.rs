@@ -22,7 +22,10 @@ struct Node<V> {
 }
 
 #[derive(Clone, Debug)]
-enum Slot<V: Clone> {
+enum Slot<V>
+where
+    V: Clone,
+{
     Empty,
     Occupied(Node<V>),
 }
@@ -37,8 +40,10 @@ const Deleted: u8 = 0b1000_0000;
 const Empty: u8 = 0b1111_1110;
 
 #[derive(Debug)]
-pub struct StampedeMap<K: Hash, V: Clone, S = BuildHasherDefault<WyHash>>
+pub struct StampedeMap<K, V, S = BuildHasherDefault<WyHash>>
 where
+    K: Hash,
+    V: Clone,
     S: BuildHasher,
 {
     data: Vec<Slot<V>>,
@@ -56,7 +61,12 @@ const fn bucket_size() -> usize {
     16
 }
 
-impl<K: Hash + Sized, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<K, V, S> {
+impl<K, V, S> StampedeMap<K, V, S>
+where
+    K: Hash + Sized,
+    V: Clone + std::fmt::Debug,
+    S: BuildHasher + Default,
+{
     pub fn new() -> Self {
         Self {
             data: vec![Slot::Empty; bucket_size()],
