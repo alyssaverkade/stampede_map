@@ -28,7 +28,7 @@ enum Slot<V: Clone> {
 }
 
 #[inline(always)]
-pub fn ctrl_hash(hash: u64) -> u8 {
+const fn ctrl_hash(hash: u64) -> u8 {
     let val = (hash & 0x7F);
     val as u8
 }
