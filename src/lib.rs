@@ -33,8 +33,8 @@ const fn ctrl_hash(hash: u64) -> u8 {
     val as u8
 }
 
-const Deleted: u8 = 0b10000000;
-const Empty: u8 = 0b11111110;
+const Deleted: u8 = 0b1000_0000;
+const Empty: u8 = 0b1111_1110;
 
 #[derive(Debug)]
 pub struct StampedeMap<K: Hash, V: Clone, S = BuildHasherDefault<WyHash>>
@@ -91,6 +91,10 @@ impl<K: Hash + Sized, V: Clone + std::fmt::Debug, S: BuildHasher + Default> Stam
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -109,7 +113,7 @@ impl<K: Hash + Sized, V: Clone + std::fmt::Debug, S: BuildHasher + Default> Stam
                 let offset = self.modulo((slot + item as usize) as u64);
                 match self.ctrl[offset] {
                     Empty => return None,
-                    val @ _ if val == ctrl => match self.data[offset] {
+                    val if val == ctrl => match self.data[offset] {
                         // the ctrl byte should be set to Empty
                         Slot::Empty => unreachable!(),
                         Slot::Occupied(ref node) if node.hash == hash => return Some(&node.value),
@@ -118,8 +122,8 @@ impl<K: Hash + Sized, V: Clone + std::fmt::Debug, S: BuildHasher + Default> Stam
                     },
                     _ => (),
                 }
-                slot = self.modulo(slot as u64 + 16);
             }
+            slot = self.modulo(slot as u64 + 16);
         }
     }
 
@@ -180,26 +184,23 @@ impl<K: Hash + Sized, V: Clone + std::fmt::Debug, S: BuildHasher + Default> Stam
         self.ctrl.resize(self.capacity + 16, Empty);
         self.data.resize(self.capacity, Slot::Empty);
         for slot in old {
-            match &slot {
-                Slot::Occupied(node) => {
-                    let mut idx = self.modulo(node.hash);
-                    // find the next place to insert
-                    loop {
-                        match self.data[idx] {
-                            Slot::Empty => break,
-                            // duplicate hashes are impossible in a bijective map
-                            _ => idx = self.modulo(idx as u64 + 1),
-                        }
+            // we don't need to preserve deleted values and empty is a no-op
+            if let Slot::Occupied(node) = &slot {
+                let mut idx = self.modulo(node.hash);
+                // find the next place to insert
+                loop {
+                    match self.data[idx] {
+                        Slot::Empty => break,
+                        // duplicate hashes are impossible in a bijective map
+                        _ => idx = self.modulo(idx as u64 + 1),
                     }
-                    let ctrl = ctrl_hash(node.hash);
-                    if (0..16).contains(&idx) {
-                        self.ctrl[self.capacity + idx] = ctrl;
-                    }
-                    self.ctrl[idx] = ctrl;
-                    self.data[idx] = slot;
                 }
-                // we don't need to preserve deleted values and empty is a no-op
-                _ => (),
+                let ctrl = ctrl_hash(node.hash);
+                if (0..16).contains(&idx) {
+                    self.ctrl[self.capacity + idx] = ctrl;
+                }
+                self.ctrl[idx] = ctrl;
+                self.data[idx] = slot;
             }
         }
     }

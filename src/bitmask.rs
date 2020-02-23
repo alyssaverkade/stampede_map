@@ -19,7 +19,9 @@ impl BitMask {
     /// Panics if `vec.len() < 16`
     pub fn matches(vec: [u8; 16], predicate: u8) -> Self {
         unsafe {
-            let vec: __m128i = _mm_lddqu_si128(vec.as_ptr() as *const __m128i);
+            // read unaligned because alignment of vec cannot be guaranteed due to it
+            // being stack allocated
+            let vec: __m128i = _mm_lddqu_si128(vec.as_ptr().read_unaligned() as *const __m128i);
             let pred = _mm_set1_epi8(predicate as i8);
             BitMask::new(_mm_movemask_epi8(_mm_cmpeq_epi8(vec, pred)) as u16)
         }
@@ -88,12 +90,8 @@ mod test {
     #[test]
     fn test_bitmask_iteration() {
         let val: u16 = 11;
-        println!("{}", val.trailing_zeros());
         let mask = BitMask::new(11);
         let vals: Vec<u16> = mask.map(|x| x as u16).collect::<Vec<u16>>();
-        for val in &vals {
-            println!("{:080b}", val);
-        }
         assert_eq!(vals[0], 0);
         assert_eq!(vals[1], 1);
         assert_eq!(vals[2], 3);
