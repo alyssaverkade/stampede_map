@@ -1,8 +1,14 @@
 #![allow(unused, non_upper_case_globals)]
+use std::cmp;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
 use std::marker::PhantomData;
+use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+mod bitmask;
+
+pub use bitmask::BitMask;
 
 use wyhash::WyHash;
 
@@ -18,9 +24,17 @@ struct Node<V> {
 #[derive(Clone, Debug)]
 enum Slot<V: Clone> {
     Empty,
-    Deleted,
     Occupied(Node<V>),
 }
+
+#[inline(never)]
+pub fn ctrl_hash(hash: u64) -> u8 {
+    let val = (hash & 0x7F);
+    val as u8
+}
+
+const Deleted: u8 = 0b10000000;
+const Empty: u8 = 0b11111110;
 
 #[derive(Debug)]
 pub struct StampedeMap<K: Hash, V: Clone, S = BuildHasherDefault<WyHash>>
@@ -31,38 +45,84 @@ where
     counter: AtomicUsize,
     len: usize,
     capacity: usize,
-    pow: u8,
+    ctrl: Vec<u8>,
+    // keep track of tombstone count because they contribute to load factor
+    deleted: usize,
     _phantom: PhantomData<(K, S)>,
 }
 
-impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<K, V, S> {
+#[inline(always)]
+const fn bucket_size() -> usize {
+    16
+}
+
+impl<K: Hash + Sized, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<K, V, S> {
     pub fn new() -> Self {
         Self {
-            data: vec![Slot::Empty; 8],
+            data: vec![Slot::Empty; bucket_size()],
             counter: AtomicUsize::new(0),
-            pow: 3,
-            capacity: 8,
+            ctrl: vec![Empty; bucket_size() * 2], // extra group for bookkeeping
+            capacity: bucket_size(),
+            deleted: 0,
             _phantom: PhantomData,
             len: 0,
         }
     }
 
+    pub fn with_capacity(cap: usize) -> Self {
+        let mut map = Self::new();
+        // round to nearest power of two and find the log2 of that number
+        let cap = cap.next_power_of_two();
+        map.capacity = cap;
+        map.data.resize(map.capacity, Slot::Empty);
+        map.ctrl.resize(map.capacity, Empty);
+        map
+    }
+
+    pub fn clear(&mut self) {
+        let mut vec = vec![Slot::Empty; self.capacity];
+        let mut ctrl = vec![Empty; self.capacity + 16];
+        mem::swap(&mut self.data, &mut vec);
+        mem::swap(&mut self.ctrl, &mut ctrl);
+        self.deleted = 0;
+        self.len = 0;
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
     #[inline(always)]
     pub fn get(&self, key: K) -> Option<&V> {
         let hash = self.hash(&key);
+        let ctrl = ctrl_hash(hash);
         let mut slot = self.modulo(hash);
         loop {
-            match self.data[slot] {
-                Slot::Empty => return None,
-                Slot::Occupied(ref node) if node.hash == hash => return Some(&node.value),
-                Slot::Occupied(_) | Slot::Deleted => slot = self.modulo(slot as u64 + 1),
+            match self.ctrl[slot] {
+                Empty => return None,
+                Deleted => (),
+                val @ _ if val == ctrl => {
+                    match self.data[slot] {
+                        // the ctrl byte should be set to Empty
+                        Slot::Empty => unreachable!(),
+                        Slot::Occupied(ref node) if node.hash == hash => return Some(&node.value),
+                        // probe chain must continue
+                        _ => (),
+                    }
+                }
+                _ => (),
             }
+            slot = self.modulo(slot as u64 + 1);
         }
     }
 
     #[inline(always)]
     fn exceeded_load_factor(&self) -> bool {
-        self.capacity * 3 < self.len * 4
+        self.capacity * 3 < (self.len + self.deleted) * 4
     }
 
     #[inline(always)]
@@ -74,12 +134,16 @@ impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<
         let mut idx = self.modulo(hash);
         loop {
             match self.data[idx] {
-                Slot::Empty | Slot::Deleted => break,
-                // I'd love to make this have the same match arm as the line above
-                Slot::Occupied(ref slot) if slot.hash == hash => break,
-                _ => idx = self.modulo(idx as u64 + 1),
+                Slot::Occupied(ref slot) if slot.hash != hash => idx = self.modulo(idx as u64 + 1),
+                _ => break,
             }
         }
+        let ctrl = ctrl_hash(hash);
+        // bookkeeping so that memcpy can acquire contiguous values
+        if (0..16).contains(&idx) {
+            self.ctrl[self.capacity + idx] = ctrl;
+        }
+        self.ctrl[idx] = ctrl;
         self.len += 1;
         self.data[idx] = Slot::Occupied(Node { hash, value });
     }
@@ -88,39 +152,48 @@ impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<
         let hash = self.hash(&key);
         let mut idx = self.modulo(hash);
         loop {
-            match self.data[idx] {
+            match &self.data[idx] {
                 Slot::Occupied(ref node) if node.hash == hash => break,
                 Slot::Empty => return,
                 _ => idx = self.modulo(idx as u64 + 1),
             }
         }
-        self.data[idx] = Slot::Deleted;
+        if (0..16).contains(&idx) {
+            self.ctrl[self.capacity + idx] = Deleted;
+        }
+        self.ctrl[idx] = Deleted;
+        self.data[idx] = Slot::Empty;
+        self.deleted += 1;
         self.len -= 1;
     }
 
     #[inline(always)]
     fn resize(&mut self) {
-        while 2usize.pow(self.pow.into()) < 3 * self.len {
-            self.pow += 1;
-        }
-        // recalculate new cap
-        self.capacity = 2usize.pow(self.pow.into());
-        let mut old = self.data.clone();
-        self.data.clear();
+        let mut old = Vec::with_capacity(self.capacity);
+        self.capacity = self.capacity().next_power_of_two();
+        self.deleted = 0;
+        mem::swap(&mut old, &mut self.data);
+        self.ctrl.clear();
+        self.ctrl.resize(self.capacity + 16, Empty);
         self.data.resize(self.capacity, Slot::Empty);
-        for slot in old.iter_mut() {
-            match slot {
+        for slot in old {
+            match &slot {
                 Slot::Occupied(node) => {
                     let mut idx = self.modulo(node.hash);
                     // find the next place to insert
                     loop {
                         match self.data[idx] {
-                            Slot::Empty | Slot::Deleted => break,
+                            Slot::Empty => break,
                             // duplicate hashes are impossible in a bijective map
                             _ => idx = self.modulo(idx as u64 + 1),
                         }
                     }
-                    self.data[idx] = std::mem::replace(slot, Slot::Empty);
+                    let ctrl = ctrl_hash(node.hash);
+                    if (0..16).contains(&idx) {
+                        self.ctrl[self.capacity + idx] = ctrl;
+                    }
+                    self.ctrl[idx] = ctrl;
+                    self.data[idx] = slot;
                 }
                 // we don't need to preserve deleted values and empty is a no-op
                 _ => (),
@@ -144,6 +217,10 @@ impl<K: Hash, V: Clone + std::fmt::Debug, S: BuildHasher + Default> StampedeMap<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    #[global_allocator]
+    static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
     #[test]
     fn basic_set_and_get() {
@@ -172,5 +249,33 @@ mod tests {
         assert_eq!(map.get(7), Some(&4));
         assert_eq!(map.get(8), Some(&3));
         assert_eq!(map.get(9), Some(&2));
+    }
+
+    #[test]
+    fn regressions() {
+        let mut map: StampedeMap<usize, usize> = StampedeMap::new();
+        let mut input = vec![(0, 0), (882041908, 0), (201832565, 0)];
+        for (k, v) in input.iter().copied() {
+            map.set(k, v);
+            assert_eq!(map.get(k), Some(&v));
+            map.delete(k);
+            assert_ne!(map.get(k), Some(&v));
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { result_cache: proptest::test_runner::basic_result_cache, cases: 16, ..Default::default() })]
+        #[test]
+        fn prop_sets_and_deletes_always_work(v in prop::collection::vec((0usize..1 << 32, 0usize..1 << 32), 10..1_000_000)) {
+            let mut map: StampedeMap<usize, usize> = StampedeMap::new();
+            for (key, value) in v.iter().copied() {
+                map.set(key, value);
+                assert_eq!(map.get(key), Some(&value));
+                map.delete(key);
+                let hash = map.hash(&key);
+                let ctrl = ctrl_hash(hash);
+                assert_ne!(map.get(key), Some(&value));
+            }
+        }
     }
 }
