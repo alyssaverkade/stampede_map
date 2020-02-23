@@ -11,7 +11,6 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 pub fn stampede_benches(c: &mut Criterion) {
     let mut rng = rand::thread_rng();
     let dist = Uniform::new(0, 1 << 32);
-    let mut map: StampedeMap<_, _> = StampedeMap::new();
     let mut values = Vec::with_capacity(INSERTION_SIZE);
     for _ in 0..INSERTION_SIZE {
         values.push((
@@ -20,13 +19,22 @@ pub fn stampede_benches(c: &mut Criterion) {
         ));
     }
     c.bench_function("random insertion", |b| {
+        let mut map: StampedeMap<_, _> = StampedeMap::with_capacity(1 << 28);
         b.iter(|| {
             for (k, v) in &values {
                 black_box(map.set(*k, *v));
             }
         })
     });
-    println!("{}", std::mem::size_of_val(&map));
+    c.bench_function("random lookup", |b| {
+        let mut map: StampedeMap<_, _> = StampedeMap::with_capacity(1 << 28);
+        for (k, v) in &values {
+            map.set(*k, *v);
+        }
+        b.iter(|| {
+            black_box(map.get(rand::random::<usize>()));
+        })
+    });
 }
 
 criterion_group!(benches, stampede_benches);
