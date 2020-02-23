@@ -11,11 +11,11 @@ impl BitMask {
         Self { mask }
     }
 
-    #[inline(always)]
-    #[cfg(target_feature = "sse3")]
     /// Load a vector of length 16 into a SSE register and constructs a bitmask of all
     /// the values that match `predicate`
     ///
+    #[inline(always)]
+    #[cfg(target_arch = "x86_64")]
     pub fn matches(vec: [u8; 16], predicate: u8) -> Self {
         unsafe {
             let vec: __m128i = _mm_lddqu_si128(vec.as_ptr() as *const __m128i);
