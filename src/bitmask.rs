@@ -16,7 +16,7 @@ impl BitMask {
     ///
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub fn matches(vec: [u8; 16], predicate: u8) -> Self {
+    pub fn matches(vec: &[u8], predicate: u8) -> Self {
         unsafe {
             let vec: __m128i = _mm_lddqu_si128(vec.as_ptr() as *const __m128i);
             let pred = _mm_set1_epi8(predicate as i8);
@@ -75,6 +75,7 @@ impl Deref for BitMask {
 impl BitOr for BitMask {
     type Output = Self;
 
+    #[inline(always)]
     fn bitor(self, rhs: Self) -> Self::Output {
         BitMask::new(self.mask | rhs.mask)
     }
@@ -101,7 +102,7 @@ mod test {
         for i in 0u8..16 {
             vec[i as usize] = i
         }
-        let mask = BitMask::matches(vec, (-128i8) as u8);
+        let mask = BitMask::matches(&vec, (-128i8) as u8);
         assert_eq!(*mask, 0);
     }
 }

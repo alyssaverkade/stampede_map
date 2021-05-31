@@ -1,19 +1,15 @@
-#![allow(unused, non_upper_case_globals)]
-use std::cmp;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
+#![allow(non_upper_case_globals)]
+use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
 use std::mem;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 
 mod bitmask;
 
 pub use bitmask::BitMask;
 
-use wyhash::WyHash;
-
-const AtomicWrite: Ordering = Ordering::Release;
-const AtomicRead: Ordering = Ordering::Acquire;
+use ahash::CallHasher;
+use lazy_static::lazy_static;
 
 #[derive(Copy, Clone, Debug)]
 struct Node<V> {
@@ -32,7 +28,7 @@ where
 
 #[inline(always)]
 const fn ctrl_hash(hash: u64) -> u8 {
-    let val = (hash & 0x7F);
+    let val = hash & 0x7F;
     val as u8
 }
 
@@ -40,13 +36,12 @@ const Deleted: u8 = 0b1000_0000;
 const Empty: u8 = 0b1111_1110;
 
 #[derive(Debug)]
-pub struct StampedeMap<K, V, S = BuildHasherDefault<WyHash>>
+pub struct StampedeMap<K, V, S = ahash::RandomState>
 where
-    K: Hash,
     V: Clone,
-    S: BuildHasher,
 {
     data: Vec<Slot<V>>,
+    // extra_data:
     counter: AtomicUsize,
     len: usize,
     capacity: usize,
@@ -63,7 +58,7 @@ const fn bucket_size() -> usize {
 
 impl<K, V, S> StampedeMap<K, V, S>
 where
-    K: Hash + Sized,
+    K: Hash + Sized + CallHasher,
     V: Clone + std::fmt::Debug,
     S: BuildHasher + Default,
 {
@@ -109,27 +104,31 @@ where
         self.capacity
     }
 
-    #[inline(always)]
+    #[inline(never)]
     pub fn get(&self, key: K) -> Option<&V> {
         let hash = self.hash(&key);
         let ctrl = ctrl_hash(hash);
         let mut slot = self.modulo(hash);
-        let mut buffer = [Empty; 16];
         loop {
-            buffer.copy_from_slice(&self.ctrl[slot..slot + 16]);
-            let ctrl_mask = BitMask::matches(buffer, ctrl);
+            // SAFETY: the `modulo` method ensures we cannot access out of bounds + the `set`
+            // method ensures that reads from len - 15..max_capacity cannot read over the end of
+            // the buffer
+            let buffer = unsafe { self.ctrl.get_unchecked(slot..slot + 16) };
             let empty_mask = BitMask::matches(buffer, Empty);
+            let ctrl_mask = BitMask::matches(buffer, ctrl);
             for item in ctrl_mask | empty_mask {
                 let offset = self.modulo((slot + item as usize) as u64);
-                match self.ctrl[offset] {
-                    Empty => return None,
-                    val if val == ctrl => match self.data[offset] {
+                // SAFETY: the `modulo` method ensures we cannot perform an out of bounds read
+                match unsafe { *self.ctrl.get_unchecked(offset) } {
+                    // SAFETY: the `modulo` method ensures we cannot perform an out of bounds read
+                    val if val == ctrl => match unsafe { self.data.get_unchecked(offset) } {
                         // the ctrl byte should be set to Empty
                         Slot::Empty => unreachable!(),
                         Slot::Occupied(ref node) if node.hash == hash => return Some(&node.value),
                         // probe chain must continue
                         _ => (),
                     },
+                    Empty => return None,
                     _ => (),
                 }
             }
@@ -217,9 +216,14 @@ where
 
     #[inline(always)]
     fn hash(&self, key: &K) -> u64 {
-        let mut hasher = S::default().build_hasher();
-        key.hash(&mut hasher);
-        hasher.finish()
+        lazy_static! {
+            static ref HASHER: ahash::RandomState = ahash::RandomState::new();
+        }
+        // static hash_builder: ahash::RandomState = ahash::RandomState::new();
+        // let mut hasher = S::default().build_hasher();
+        // key.hash(&mut hasher);
+        // hasher.finish()
+        K::get_hash(key, &*HASHER)
     }
 
     #[inline(always)]
